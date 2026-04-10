@@ -1,0 +1,10 @@
+{
+  "commit": "445a2a2fb9e6eb0579d3d2a591823ea0be8335f3",
+  "origin_id": "c7cf71c3-0f82-40df-8417-b23eeb3e11b1",
+  "hash": "",
+  "proof_status": "pending",
+  "bitcoin_block_height": null,
+  "anchored_at": "2026-04-10T08:19:52Z",
+  "proof_bundle": "445a2a2.proof/",
+  "verify": "npx @umarise/cli verify --origin-id c7cf71c3-0f82-40df-8417-b23eeb3e11b1"
+}
