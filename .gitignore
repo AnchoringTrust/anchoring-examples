@@ -1,0 +1,6 @@
+build.tar
+build.tar.gz
+image.tar.gz
+*.proof
+*.anchor-status.json
+node_modules/

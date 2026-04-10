@@ -1,0 +1,176 @@
+name: Anchor to Bitcoin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check API key
+        id: key
+        env:
+          UMARISE_API_KEY: ${{ secrets.UMARISE_API_KEY }}
+        run: |
+          if [ -n "$UMARISE_API_KEY" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️  UMARISE_API_KEY not set — add it in Settings → Secrets"
+          fi
+
+      - name: Create deterministic build artifact
+        if: steps.key.outputs.ok == 'true'
+        run: |
+          tar --sort=name \
+              --mtime='UTC 1970-01-01' \
+              --owner=0 --group=0 --numeric-owner \
+              --exclude='.git' \
+              --exclude='proofs' \
+              -cf build.tar .
+          gzip -n -f build.tar
+          echo "SHA-256: $(sha256sum build.tar.gz | cut -d' ' -f1)"
+
+      - name: Anchor to Bitcoin
+        if: steps.key.outputs.ok == 'true'
+        id: anchor
+        uses: AnchoringTrust/anchor-action@v1
+        with:
+          file: build.tar.gz
+        env:
+          UMARISE_API_KEY: ${{ secrets.UMARISE_API_KEY }}
+
+      - name: Extract proof bundle (lightweight)
+        if: steps.key.outputs.ok == 'true' && steps.anchor.outputs.origin-id != ''
+        id: extract
+        run: |
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          PROOF_DIR="proofs/${COMMIT_SHORT}.proof"
+          mkdir -p "$PROOF_DIR"
+
+          PROOF_ZIP="build.tar.gz.proof"
+          if [ -f "$PROOF_ZIP" ]; then
+            unzip -jo "$PROOF_ZIP" "*/certificate.json" -d "$PROOF_DIR" 2>/dev/null || true
+            unzip -jo "$PROOF_ZIP" "*/proof.ots" -d "$PROOF_DIR" 2>/dev/null || true
+
+            if [ -f "$PROOF_DIR/certificate.json" ]; then
+              echo "✅ certificate.json extracted"
+              echo "has_cert=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "⚠️ certificate.json not found in bundle"
+              echo "has_cert=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            if [ -f "$PROOF_DIR/proof.ots" ]; then
+              echo "✅ proof.ots extracted ($(wc -c < "$PROOF_DIR/proof.ots") bytes)"
+              echo "has_ots=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "⏳ proof.ots not yet available (pending Bitcoin confirmation)"
+              echo "has_ots=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            rm -f "$PROOF_ZIP"
+            echo "proof_dir=${PROOF_DIR}" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ No .proof bundle generated"
+            echo "has_cert=false" >> "$GITHUB_OUTPUT"
+            echo "has_ots=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check proof status
+        if: steps.key.outputs.ok == 'true' && steps.anchor.outputs.origin-id != ''
+        id: proof
+        env:
+          UMARISE_API_KEY: ${{ secrets.UMARISE_API_KEY }}
+        run: |
+          ORIGIN_ID="${{ steps.anchor.outputs.origin-id }}"
+          echo "Resolving proof for: ${ORIGIN_ID}"
+
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${UMARISE_API_KEY}" \
+            "https://core.umarise.com/v1-core-resolve?origin_id=${ORIGIN_ID}" 2>/dev/null || echo "{}")
+
+          STATUS=$(echo "$RESPONSE" | grep -o '"proof_status":"[^"]*"' | cut -d'"' -f4)
+          BLOCK=$(echo "$RESPONSE" | grep -o '"bitcoin_block_height":[0-9]*' | cut -d':' -f2)
+
+          echo "status=${STATUS:-pending}" >> "$GITHUB_OUTPUT"
+          echo "block=${BLOCK:-}" >> "$GITHUB_OUTPUT"
+
+          if [ "$STATUS" = "anchored" ]; then
+            echo "✅ Bitcoin confirmed at block ${BLOCK}"
+          else
+            echo "⏳ Pending — Bitcoin confirmation takes ~2 hours"
+          fi
+
+      - name: Save proof record and commit
+        if: steps.key.outputs.ok == 'true' && steps.anchor.outputs.origin-id != ''
+        run: |
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          PROOF_DIR="proofs/${COMMIT_SHORT}.proof"
+          mkdir -p "$PROOF_DIR"
+
+          cat > "proofs/${COMMIT_SHORT}.json" <<PROOFEOF
+          {
+            "commit": "${GITHUB_SHA}",
+            "origin_id": "${{ steps.anchor.outputs.origin-id }}",
+            "hash": "${{ steps.anchor.outputs.hash }}",
+            "proof_status": "${{ steps.proof.outputs.status }}",
+            "bitcoin_block_height": ${{ steps.proof.outputs.block || 'null' }},
+            "anchored_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "proof_bundle": "${COMMIT_SHORT}.proof/",
+            "verify": "npx @umarise/cli verify --origin-id ${{ steps.anchor.outputs.origin-id }}"
+          }
+          PROOFEOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add proofs/
+          if git diff --cached --quiet; then
+            echo "No new proofs to commit"
+          else
+            git commit -m "proof: anchor ${COMMIT_SHORT} [${{ steps.proof.outputs.status }}]"
+            git pull --rebase origin main || true
+            git push
+          fi
+
+      - name: Upload proof artifact
+        if: steps.key.outputs.ok == 'true' && steps.extract.outputs.has_cert == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build.tar.gz.proof
+          path: ${{ steps.extract.outputs.proof_dir }}
+          retention-days: 90
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🔒 Anchor Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.key.outputs.ok }}" != "true" ]; then
+            echo "⚠️ Skipped — \`UMARISE_API_KEY\` not configured" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Add your key: **Settings → Secrets → Actions → \`UMARISE_API_KEY\`**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Commit | \`${GITHUB_SHA::8}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Origin ID | \`${{ steps.anchor.outputs.origin-id }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Hash | \`${{ steps.anchor.outputs.hash }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | ${{ steps.proof.outputs.status }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Proof Bundle | \`proofs/${GITHUB_SHA::7}.proof/\` |" >> $GITHUB_STEP_SUMMARY
+            if [ -n "${{ steps.proof.outputs.block }}" ]; then
+              echo "| Bitcoin Block | \`${{ steps.proof.outputs.block }}\` |" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Proof contents:** certificate.json + proof.ots (~4KB)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Verify: \`npx @umarise/cli verify --origin-id ${{ steps.anchor.outputs.origin-id }}\`" >> $GITHUB_STEP_SUMMARY
+          fi

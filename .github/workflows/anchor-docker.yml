@@ -1,0 +1,29 @@
+name: Build + Anchor (Docker)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-anchor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t myapp:${{ github.sha }} .
+
+      - name: Save image as tarball
+        run: docker save myapp:${{ github.sha }} | gzip > image.tar.gz
+
+      - name: Anchor to Bitcoin
+        uses: AnchoringTrust/anchor-action@v1
+        with:
+          file: image.tar.gz
+        env:
+          UMARISE_API_KEY: ${{ secrets.UMARISE_API_KEY }}
