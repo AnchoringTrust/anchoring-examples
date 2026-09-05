@@ -1,0 +1,3 @@
+Nextcloud Community Conference, Berlin, 19 September 2026
+Verifying that a file existed, without asking the server that stored it
+Jonna Fassbender, Umarise
