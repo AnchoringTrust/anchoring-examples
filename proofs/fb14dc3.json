@@ -1,0 +1,10 @@
+{
+  "commit": "fb14dc36dcce4922811259dbbb9583f5ea5e5949",
+  "origin_id": "1e77be0b-ad35-46a4-8bef-a9aca68edbc8",
+  "hash": "",
+  "proof_status": "pending",
+  "bitcoin_block_height": null,
+  "anchored_at": "2026-09-14T17:57:17Z",
+  "proof_bundle": "fb14dc3.proof/",
+  "verify": "npx @umarise/cli verify --origin-id 1e77be0b-ad35-46a4-8bef-a9aca68edbc8"
+}
