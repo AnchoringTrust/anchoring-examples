@@ -9,6 +9,8 @@
 
 Verify any `.proof` file at [verify-anchoring.org](https://verify-anchoring.org).
 
+Conference attendees: see [The Berlin example](#the-berlin-example).
+
 ---
 
 ## How it works
@@ -115,6 +117,51 @@ Pick the template that matches your stack:
   env:
     UMARISE_API_KEY: \${{ secrets.UMARISE_API_KEY }}
 \`\`\`
+
+---
+
+## The Berlin example
+
+`berlin.txt` is the artifact used in the Nextcloud Community Conference
+lightning talk. Its proof is `berlin.txt.ots`, anchored to Bitcoin.
+
+**Step 1 — check you have the same bytes.**
+
+    Linux:    sha256sum berlin.txt
+    macOS:    shasum -a 256 berlin.txt
+    Windows:  Get-FileHash .\berlin.txt -Algorithm SHA256
+
+Expected:
+
+    3979803321ad2608d3d97bbe678c893e1aad610f23b6a7fa3c0fc967616cc787
+
+If your digest differs, you do not have the same file. Windows prints
+uppercase; the comparison is case-insensitive. This file is checked out
+with LF line endings (see `.gitattributes`).
+
+**Step 2 — verify the proof.**
+
+    Web:  https://verify-anchoring.org  (HASH + OTS tab)
+    Info: ots info berlin.txt.ots
+
+`berlin.txt.ots` is confirmed in Bitcoin block 965633. `ots info` shows the
+full Merkle path offline, ending in that block's header. The other
+`PendingAttestation` lines are additional calendars that have not been
+included in a block yet; one confirmed attestation is what matters.
+
+`ots verify berlin.txt.ots` compares that path against a Bitcoin node. If
+you do not run one locally it reports that it cannot connect, which says
+nothing about the proof.
+
+**Step 3 — check the block yourself.**
+
+Look up block 965633 in any block explorer and compare its Merkle root to:
+
+    796881583ff407a6dd554b62b137d3228c7aa66534360511104a0c49acaf4b7a
+
+This proves the file existed no later than that block. It says nothing
+about who wrote it or whether its contents are true. Nothing in this
+chain requires Umarise.
 
 ---
 
